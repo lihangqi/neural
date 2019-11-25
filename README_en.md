@@ -4,14 +4,15 @@
 
 [TOC]
 
-<-. (`-')_ (`-') _ (`-') (`-') _
-\( OO) ) ( OO).-/ .-> <-.(OO ) (OO ).-/ <-.
-,--./ ,--/ (,------.,--.(,--. ,------,) / ,---. ,--. )
-| \ | | | .---'| | |(`-')| /`. ' | \ /`.\ | (`-')
-| . '| |)(| '--. | | |(OO )| |_.' | '-'|_.' | | |OO )
-| |\ | | .--' | | | | \| . .'(| .-. |(| '__ |
-| | \ | | `---.\ '-'(_ .'| |\ \ | | | | | |'
-`--' `--' `------' `-----' `--' '--' `--' `--' `-----'
+	<-. (`-')_  (`-')  _              (`-')  (`-')  _           
+	   \( OO) ) ( OO).-/     .->   <-.(OO )  (OO ).-/    <-.    
+	,--./ ,--/ (,------.,--.(,--.  ,------,) / ,---.   ,--. )   
+	|   \ |  |  |  .---'|  | |(`-')|   /`. ' | \ /`.\  |  (`-') 
+	|  . '|  |)(|  '--. |  | |(OO )|  |_.' | '-'|_.' | |  |OO ) 
+	|  |\    |  |  .--' |  | | |  \|  .   .'(|  .-.  |(|  '__ | 
+	|  | \   |  |  `---.\  '-'(_ .'|  |\  \  |  | |  | |     |' 
+	`--'  `--'  `------' `-----'   `--' '--' `--' `--' `-----'  
+
 
 The neural organization in the microservice architecture mainly provides three major blades for cluster fault tolerance for distributed architecture: current limiting, degrading, and fusing. It also provides SPI, filter, JWT, retry mechanism, and plug-in mechanism. In addition, there are many small black technologies (such as IP black and white list, UUID enhanced version, Snowflake and large concurrent timestamp acquisition, etc.).
 
