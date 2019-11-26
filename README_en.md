@@ -69,13 +69,13 @@ The neural organization in the microservice architecture mainly provides three m
 
 ### 1.3 How to use
 
-**Step **: Define the interface
+**Step 1**: Define the interface
 ```java
 @SPI
 Public interface IDemo {}
 ```
 
-**Step 2: Define the interface implementation class
+**Step 2**: Define the interface implementation class
 ```java
 @Extension("demo1")
 Public class Demo1Impl implements IDemo {}
