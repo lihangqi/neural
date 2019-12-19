@@ -1,6 +1,6 @@
-中文 | [English](/README_en.md)
+[中文](/README.cn.md) | English
 
-# 微服务神经元(Neural)
+# Neural
 
 [TOC]
 
@@ -13,234 +13,204 @@
 	|  | \   |  |  `---.\  '-'(_ .'|  |\  \  |  | |  | |     |' 
 	`--'  `--'  `------' `-----'   `--' '--' `--' `--' `-----'  
 
-微服务架构中的神经组织，主要为分布式架构提供了集群容错的三大利刃：限流、降级和熔断。并同时提供了SPI、过滤器、JWT、重试机制、插件机制。此外还提供了很多小的黑科技(如：IP黑白名单、UUID加强版、Snowflake和大并发时间戳获取等)。
 
-**核心功能**：
-- **限流**：致力于解决外部流量的冲击压力
-- **降级**：致力于解决内部服务的故障事件
-- **熔断**：致力于解决内部服务的稳定性
-- **重试**：致力于提高外部服务的成功率
+The neural organization in the microservice architecture mainly provides three major blades for cluster fault tolerance for distributed architecture: current limiting, degrading, and fusing. It also provides SPI, filter, JWT, retry mechanism, and plug-in mechanism. In addition, there are many small black technologies (such as IP black and white list, UUID enhanced version, Snowflake and large concurrent timestamp acquisition, etc.).
+
+**Core functions**:
+- **Limited flow**: Committed to solving the impact pressure of external flow
+- **downgrade**: Committed to solving internal service failure events
+- **Fuse**: Committed to the stability of internal services
+- **Retry**: Committed to improving the success rate of external services
 
 **Features**
 
-- 分布式限流（`Limiter`）
-	- 致力于分布式服务调用的流量控制，可以在服务之间调用和服务网关中进行限流！
-- 服务降级（`Degrade`）
-	- 致力于提供分布式的服务降级开关！
-- 个性化重试（`Retryer`）
-	- 致力于打造更加智能的重试机制，带你见证重试AI！
-- 服务鉴权（`Auth`）
-	- 致力于保证每次分布式调用鉴定，可在服务注册、订阅及调用环节进行服务鉴权！
-- 链路追踪（`Trace`）
-    - 致力于为微服务架构提供链路追踪的埋点！
-- 黑科技
-    - `Perf`：性能测试神器，可以用于为单个方法或代码块进行性能测试
-    - `NUUID`：UUID扩展版，提供更丰富的UUID生产规则
-    - `Filter`：基于责任链模式的过滤器
-    - `IPFilter`：IP黑白名单过滤器
-    - `Snowflake`：基于Snowflake算法的分布式ID生成器
-    - `SystemClock`：解决大并发场景下获取时间戳时的性能问题
+- Distributed current limit (`Limiter`)
+- Dedicated to the flow control of distributed service calls, you can limit the flow between the service calls and the service gateway!
+- Service downgrade (`Degrade`)
+- Committed to providing distributed service downgrade switches!
+- Personalized retry (`Retryer`)
+- Committed to building a smarter retry mechanism to show you the retest AI!
+- Service authentication (`Auth`)
+- Committed to ensuring the authentication of each distributed call, service authentication in the service registration, subscription and invocation links!
+- Link Tracking (`Trace`)
+    - Committed to providing link tracking for microservice architecture!
+- Black Technology
+    - `Perf`: a performance test artifact that can be used to test performance for a single method or block of code
+    - `NUUID`: UUID extended version, providing richer UUID production rules
+    - `Filter`: filter based on responsibility chain mode
+    - `IPFilter`: IP black and white list filter
+    - `Snowflake`: Distributed ID Generator based on Snowflake algorithm
+    - `SystemClock`: Resolve performance issues when getting timestamps in large concurrent scenarios
 
 ## 1 SPI
-### 1.1 JDK中SPI缺陷
+### 1.1 SPI defects in JDK
 
-- JDK标准的SPI会一次性实例化扩展点所有实现，如果有扩展实现初始化很耗时，但如果没用上也加载，会很浪费资源
-- 不支持扩展点的IoC和AOP
-- 不支持实现排序
-- 不支持实现类分组
-- 不支持单例/多例的选择
+- The JDK standard SPI will instantiate all implementations of the extension point at one time. It is time consuming to implement the extension implementation, but it will be a waste of resources if it is not loaded.
+- IoC and AOP for extension points are not supported
+- Do not support sorting
+- Implementation class grouping is not supported
+- Does not support single/multiple choices
 
-### 1.2 SPI功能特性
+### 1.2 SPI Features
 
-- 支持自定义实现类为单例/多例
-- 支持设置默认的实现类
-- 支持实现类order排序
-- 支持实现类定义特征属性category，用于区分多维度的不同类别
-- 支持根据category属性值来搜索实现类
-- 支持自动扫描实现类
-- 支持手动添加实现类
-- 支持获取所有实现类
-- 支持只创建所需实现类，解决JDK原生的全量方式
-- 支持自定义ClassLoader来加载class
+- Support for custom implementation classes as singleton/multiple cases
+- Support for setting the default implementation class
+- Support for class order sorting
+- Support implementation class definition feature attribute category, used to distinguish different categories of multiple dimensions
+- Support for searching implementation classes based on category attribute values
+- Support automatic scanning implementation class
+- Support for manually adding implementation classes
+- Support for all implementation classes
+- Supports only creating the required implementation classes, solving the JDK native full way
+- Support custom ClassLoader to load class
 
-**TODO**：需要实现对扩展点IoC和AOP的支持，一个扩展点可以直接setter注入其它扩展点。
+**TODO**: Support for extension point IoC and AOP needs to be implemented. One extension point can directly sink into other extension points.
 
 
-### 1.3 使用方式
+### 1.3 How to use
 
-**第一步**：定义接口
+**Step 1**: Define the interface
 ```java
 @SPI
-public interface IDemo {}
+Public interface IDemo {}
 ```
 
-**第二步**：定义接口实现类
+**Step 2**: Define the interface implementation class
 ```java
 @Extension("demo1")
-public class Demo1Impl implements IDemo {}
+Public class Demo1Impl implements IDemo {}
 
 @Extension("demo2")
-public class Demo2Impl implements IDemo {}
+Public class Demo2Impl implements IDemo {}
 ```
 
-**第三步**：使用接口全路径（包名+类名）创建接口资源文件
+**Step 3**: Create an interface resource file using the interface full path (package name class name)
 
 `src/main/resources/META-INF/neural/io.neural.demo.IDemo`
 
-**第四步**：在接口资源文件中写入实现类全路径（包名+类名）
+**Step 4**: Write the implementation class full path (package name class name) in the interface resource file
 ```
 io.neural.demo.Demo1Impl
 io.neural.demo.Demo2Impl
 ```
 
-**第五步**：使用ExtensionLoader来获取接口实现类
+**Step 5**: Use ExtensionLoader to get the interface implementation class
 ```java
-public class Demo{
-    public static void main(String[] args){
-        IDemo demo1 =ExtensionLoader.getLoader(IDemo.class).getExtension("demo1");
-        IDemo demo2 =ExtensionLoader.getLoader(IDemo.class).getExtension("demo2"); 
-    }
+Public class Demo{
+    Public static void main(String[] args){
+        IDemo demo1 = ExtensionLoader.getLoader(IDemo.class).getExtension("demo1");
+        IDemo demo2 =ExtensionLoader.getLoader(IDemo.class).getExtension("demo2");
+    }
 }
 ```
 
 
-## 2 限流（Limiter）
-在分布式架构中，限流的场景主要分为两种：injvm模式和cluster模式。
+## 2 Current Limit (Limiter)
+In the distributed architecture, the traffic limiting scenarios are mainly divided into two types: injvm mode and cluster mode.
 
 ![redis-lua.png](docs/redis-lua.png)
 
-### 2.1 injvm模式
-#### 2.1.1 并发量（Concurrency）
-使用JDK中的信号量(Semaphore)进行控制。
+### 2.1 injvm mode
+#### 2.1.1 Concurrency
+Use the semaphore in the JDK for control.
 
 ```java
-public class Test{
-    public static void main(String[] args){
-        Semaphore semaphore = new Semaphore(10,true);
-        semaphore.acquire();
-        //do something here
-        semaphore.release();
-    }
+Public class Test{
+    Public static void main(String[] args){
+        Semaphore semaphore = new Semaphore(10,true);
+        Semaphore.acquire();
+        //do something here
+        Semaphore.release();
+    }
 }
 ```
 
-#### 2.1.2 速率控制（Rate）
-使用Google的Guava中的限速器(RateLimiter)进行控制。
+#### 2.1.2 Rate Control (Rate)
+Use the speed limiter (RateLimiter) in Google's Guava for control.
 
 ```java
-public class Test{
-    public static void main(String[] args){
-        RateLimiter limiter = RateLimiter.create(10.0); // 每秒不超过10个任务被提交
-        limiter.acquire(); // 请求RateLimiter
-    }
+Public class Test{
+    Public static void main(String[] args){
+        RateLimiter limiter = RateLimiter.create(10.0); // No more than 10 tasks per second are submitted
+        Limiter.acquire(); // Request RateLimiter
+    }
 }
 ```
 
-### 2.2 cluster模式（待完成）
-分布式限流主要适用于保护集群的安全或者用于严格控制用户的请求量（API经济）。
+### 2.2 cluster mode (to be completed)
+Distributed current limiting is mainly used to protect the security of the cluster or to strictly control the amount of requests from users (API economy).
 
-https://www.jianshu.com/p/a3d068f2586d
+Https://www.jianshu.com/p/a3d068f2586d
 
-### 2.3 限制瞬时并发数
+### 2.3 Limiting the number of instantaneous concurrency
 
-- **定义**：瞬时并发数，系统同时处理的请求/事务数量
-- **优点**：这个算法能够实现控制并发数的效果
-- **缺点**：使用场景比较单一，一般用来对入流量进行控制
+- **Definition**: Instantaneous concurrency, the number of requests/transactions processed by the system simultaneously
+- **Benefits**: This algorithm can achieve the effect of controlling the number of concurrent
+- **Disadvantages**: The usage scenario is relatively simple and is generally used to control incoming traffic.
 
-### 2.4 限制时间窗最大请求数
+### 2.4 Limit time window maximum request number
 
-- **定义**：时间窗最大请求数，指定的时间范围内允许的最大请求数
-- **优点**：这个算法能够满足绝大多数的流控需求，通过时间窗最大请求数可以直接换算出最大的QPS（QPS = 请求数/时间窗）
-- **缺点**：这种方式可能会出现流量不平滑的情况，时间窗内一小段流量占比特别大
+- **Define**: Maximum number of requests for time window, maximum number of requests allowed in the specified time range
+- **Advantages**: This algorithm can satisfy most of the flow control requirements. The maximum QPS can be directly converted by the maximum number of requests in the time window (QPS = Requests/Time Window)
+- **Disadvantages**: This method may cause unsmooth traffic, and a small amount of traffic in the time window is particularly large.
 
-### 2.5 令牌桶
+### 2.5 Token bucket
 
-**算法描述**
+**Algorithm Description**
 
-- 假如用户配置的平均发送速率为r，则每隔1/r秒一个令牌被加入到桶中
-- 假设桶中最多可以存放b个令牌。如果令牌到达时令牌桶已经满了，那么这个令牌会被丢弃
-- 当流量以速率v进入，从桶中以速率v取令牌，拿到令牌的流量通过，拿不到令牌流量不通过，执行熔断逻辑
+- If the average sending rate configured by the user is r, one token is added to the bucket every 1/r second.
+- Assume that up to b tokens can be stored in the bucket. If the token bucket is full when the token arrives, the token will be discarded.
+- When traffic enters at rate v, the token is taken from the bucket at rate v, the traffic of the token is passed, and the token traffic is not passed, and the fuse logic is executed.
 
-**属性**
+**Attributes**
 
-- 长期来看，符合流量的速率是受到令牌添加速率的影响，被稳定为：r
-- 因为令牌桶有一定的存储量，可以抵挡一定的流量突发情况 
-    - M是以字节/秒为单位的最大可能传输速率。 M>r
-    - T max = b/(M-r) 承受最大传输速率的时间
-    - B max = T max * M 承受最大传输速率的时间内传输的流量
+- In the long run, the rate of compliance with traffic is affected by the token addition rate and is stabilized as: r
+- Because the token bucket has a certain amount of storage, it can withstand certain traffic bursts.
+    - M is the maximum possible transfer rate in bytes per second. M>r
+    - T max = b/(M-r) Time to withstand the maximum transmission rate
+    - B max = T max * M The amount of traffic transmitted during the time that is subject to the maximum transmission rate
 
-**优点**：流量比较平滑，并且可以抵挡一定的流量突发情况
+**Advantages**: The traffic is smooth and can withstand certain traffic bursts
 
 
-## 3 熔断（CircuitBreaker）
-在分布式架构中，熔断的场景主要分为两种：injvm模式和cluster模式。
+## 3 CircuitBreaker
+In the distributed architecture, there are two main types of blown scenes: injvm mode and cluster mode.
 
-### 3.1事件统计熔断器（EventCountCircuitBreaker）
-在指定时间周期内根据事件发生的次数来实现精简版熔断器。如10秒之内触发5次事件，则进行熔断。
+### 3.1 Event Statistics Fuse (EventCountCircuitBreaker)
+A lite fuse is implemented based on the number of times the event occurred during a specified time period. If 5 events are triggered within 10 seconds, the fuse is blown.
 
-### 3.2 门限熔断器（ThresholdCircuitBreaker）
+### 3.2 Threshold Circuit Breaker (ThresholdCircuitBreaker)
 TODO
 
 
-## 4 降级（Degrade）（待完成）
-服务降级是指当服务器压力剧增时，根据当前业务情况及流量对一些服务和页面有策略的降级，以此缓解了服务器资源压力，以保证核心任务的正常运行，同时也保证了部分甚至大部分客户得到正确响应。
+## 4 Degrade (to be completed)
+Service downgrade refers to the downgrading of some services and pages according to the current business situation and traffic when the server pressure increases sharply, thereby alleviating the pressure on the server resources to ensure the normal operation of the core tasks, while ensuring some or even large Some customers get the right response.
 
-### 4.1 管理方式
-#### 4.1.1 直接管理方式：运维人员可以指定哪些模块降级
-当服务器检测到压力增大，服务器监测自动发送通知给运维人员，运维人员根据自己或相关人员判断后通过配置平台设置当前运行等级来降级。降级首先可以对非核心业务进行接口降级。如果效果不显著，开始对一些页面进行降级，以此保证核心功能的正常运行。
+### 4.1 Management method
+#### 4.1.1 Direct management mode: The operation and maintenance personnel can specify which modules are downgraded.
+When the server detects an increase in pressure, the server monitors automatically sends a notification to the operation and maintenance personnel. The operation and maintenance personnel degrade the system according to the judgment of the user or the relevant personnel and set the current operation level through the configuration platform. Downgrading can first downgrade interfaces to non-core services. If the effect is not significant, start downgrading some pages to ensure that the core functions are working properly.
 
-#### 4.1.2 分级管理方式：运维人员无需关心业务细节，直接按级别降低即可
-业务确定好对应业务的优先级别，指定好分级降级方案。当服务器检测到压力增大，服务检测自动发送通知给运维人员。运维人员根据情况选择运行等级。
+#### 4.1.2 Hierarchical management mode: O&M personnel do not need to care about the details of the business, but can directly lower the level.
+The service determines the priority level of the corresponding business and specifies the hierarchical degradation plan. When the server detects an increase in pressure, the service detection automatically sends a notification to the operation and maintenance personnel. The operation and maintenance personnel select the operation level according to the situation.
 
 
-## 5 重试（Retryer）
-### 5.1 重试策略
-#### 5.1.1 块策略（BlockStrategy）
-使当前线程使用Thread.sleep()的方式进行休眠重试。
+## 5 Retryer
+### 5.1 Retry strategy
+#### 5.1.1 Block Strategy (BlockStrategy)
+Causes the current thread to perform a sleep retry using Thread.sleep().
 
-#### 5.1.2 停止策略（StopStrategy）
+#### 5.1.2 Stop Strategy (StopStrategy)
 
-- **NeverStopStrategy**：从不停止策略
-- **StopAfterAttemptStrategy**：尝试后停止策略
-- **StopAfterDelayStrategy**：延迟后停止策略
+- **NeverStopStrategy**: Never stop strategy
+- **StopAfterAttemptStrategy**: Stop the strategy after trying
+- **StopAfterDelayStrategy**: Stop strategy after delay
 
-#### 5.1.3 等待策略（WaitStrategy）
+#### 5.1.3 Waiting Strategy (WaitStrategy)
 
-- **FixedWaitStrategy**：固定休眠时间等待策略
-- **RandomWaitStrategy**：随机休眠时间等待策略，支持设置随机休眠时间的下限值（minmum）与上限值（maxmum）
-- **IncrementingWaitStrategy**：定长递增休眠时间等待策略
-- **ExponentialWaitStrategy**：指数函数（2^x，其中x表示尝试次数）递增休眠时间等待策略。支持设置休眠时间的上限值（maximumWait）
-- **FibonacciWaitStrategy**：斐波那契数列递增休眠时间等待策略。支持设置休眠时间的上限值（maximumWait）
-- **CompositeWaitStrategy**：复合等待策略，即支持以上等待策略的组合计算休眠时间，最终休眠时间是以上策略中休眠时间之和
-- **ExceptionWaitStrategy**：异常等待策略
-
-### 5.2 指定结果重试
-**retryIfResult(Predicate< V> resultPredicate)**：设置重试不满足条件的结果
-
-eg：如果返回结果为空则重试：retryIfResult(Predicates.< Boolean>isNull())
-
-### 5.3 指定异常重试
-
-- **retryIfException()**：重试所有异常
-- **retryIfRuntimeException()**：重试运行时异常
-- **retryIfExceptionOfType(Class<? extends Throwable> exceptionClass)**：重试指定类型异常
-- **retryIfException(Predicate< Throwable> exceptionPredicate)** ：自定义过滤后的异常重试
-
-### 5.4 重试监听器（RetryListener）
-**withRetryListener(RetryListener listener)**：添加重试监听器
-
-### 5.5 尝试时间限制器（AttemptTimeLimiter）
-**withAttemptTimeLimiter(AttemptTimeLimiter< V> attemptTimeLimiter)**：添加尝试时间限制器
-
-## 6 JWT（JSON Web Token）
-功能来源于java-jwt项目，但有一定的调整，后续会继续简化。
-
-## 7 过滤器（Filter）
-基于@SPI扩展方式和责任链模式实现的过滤器机制。
-
-## 8 其它黑科技
-- **Perf**：性能测试工具
-- **IPFilter**：IP黑白名单过滤器
-- **SystemClock**：解决大并发场景中获取System.currentTimeMillis()的性能问题
-- **Snowflake**：基于Snowflake算法实现的高性能Long型ID生成器。理论QPS > 400w/s
-- **MicroUUID**：UUID扩展版。支持36/32/22/19位的UUID生成方式(不牺牲精度)，支持牺牲一定精度后的15位超短UUID
+- **FixedWaitStrategy**: Fixed sleep time wait strategy
+- **RandomWaitStrategy**: Random sleep time waiting strategy, support setting the lower limit (minmum) and upper limit (maxmum) of random sleep time
+- **IncrementingWaitStrategy**: Fixed length incremental sleep time wait strategy
+- **ExponentialWaitStrategy**: The exponential function (2^x, where x represents the number of attempts) increments the sleep time wait strategy. Support to set the upper limit of sleep time (maximumWait)
+- **FibonacciWaitStrategy**: Fibonacci sequence increments sleep time wait strategy. Support to set the upper limit of sleep time (maximumWait)
+- **CompositeWaitStrategy**: Composite wait policy, which supports the combination of the above waiting strategies to calculate the sleep time, and the final sleep time is the sum of the sleep times in the above strategy.
+- **ExceptionWaitStrategy**: Exception Waiting Policy
