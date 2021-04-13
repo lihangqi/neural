@@ -6,14 +6,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.micro.neural.Neural;
 import org.micro.neural.common.Constants;
 import org.micro.neural.common.URL;
-import org.micro.neural.common.collection.ConcurrentHashSet;
 
 import static org.micro.neural.common.Constants.*;
 
 import org.micro.neural.common.utils.SerializeUtils;
 import org.micro.neural.config.*;
 import org.micro.neural.config.GlobalConfig.*;
-import org.micro.neural.extension.ExtensionLoader;
 
 import java.util.*;
 import java.util.concurrent.*;
@@ -28,8 +26,8 @@ import java.util.concurrent.*;
  * 2.NeuralConfig-Hash: [space]:RULE-->[module]:[application]:[group]:[resource]-->[json]
  * 3.GlobalStatistics-Hash: [space]:STATISTICS-->[module]:[application]:[group]:[resource]-->[json]
  * <p>
- * 1.GlobalConfig-Channel: [space]:GLOBAL:CHANNEL:[module]-->[json]
- * 2.NeuralConfig-Channel: [space]:RULE:CHANNEL:[module]:[application]:[group]:[resource]-->[json]
+ * 1.GlobalConfig-Channel: [space]:CHANNEL:GLOBAL:[module]-->[json]
+ * 2.NeuralConfig-Channel: [space]:CHANNEL:RULE:[module]:[application]:[group]:[resource]-->[json]
  * <p>
  * identity=[module]
  * identity=[module]:[application]:[group]:[resource]
@@ -37,7 +35,11 @@ import java.util.concurrent.*;
  * @author lry
  */
 @Slf4j
-public class StorePool implements IStoreListener {
+public enum StorePool implements IStoreListener {
+
+    // ===
+
+    INSTANCE;
 
     private static final String SPACE_DEFAULT = "neural";
     private static final String PULL_CONFIG_CYCLE_KEY = "pullConfigCycle";
@@ -48,12 +50,12 @@ public class StorePool implements IStoreListener {
     private String space;
     private long pullConfigCycle;
     private long statisticReportCycle;
-    private IStore store;
+    private RedisStore redisStore = RedisStore.INSTANCE;
 
     private ScheduledExecutorService pullConfigExecutor = null;
     private ScheduledExecutorService pushStatisticsExecutor = null;
 
-    private volatile Set<String> channels = new ConcurrentHashSet<>();
+    private String patternChannel;
     /**
      * Map<[module], Neural>
      */
@@ -62,15 +64,6 @@ public class StorePool implements IStoreListener {
      * Map<[module], Map<[identity], [JSON]>>
      */
     private volatile Map<String, Map<String, String>> ruleConfigs = new ConcurrentHashMap<>();
-
-    private static StorePool INSTANCE = new StorePool();
-
-    private StorePool() {
-    }
-
-    public static StorePool getInstance() {
-        return INSTANCE;
-    }
 
     public void register(String module, Neural neural) {
         modules.put(module, neural);
@@ -81,10 +74,6 @@ public class StorePool implements IStoreListener {
         moduleMap.put(identity, ruleConfig);
     }
 
-    public IStore getStore() {
-        return store;
-    }
-
     public synchronized void initialize(URL url) {
         if (started) {
             return;
@@ -93,14 +82,14 @@ public class StorePool implements IStoreListener {
         this.started = true;
         this.pullConfigCycle = url.getParameter(PULL_CONFIG_CYCLE_KEY, 5L);
         this.statisticReportCycle = url.getParameter(STATISTIC_REPORT_CYCLE_KEY, 1000L);
-        this.space = url.getParameter(URL.GROUP_KEY, SPACE_DEFAULT);
+        this.space = url.getParameter(URL.GROUP_KEY, SPACE_DEFAULT).toUpperCase();
         if (space.contains(Constants.DELIMITER)) {
             throw new IllegalArgumentException("The space can't include ':'");
         }
-        space = space.toUpperCase();
+        this.patternChannel = String.join(DELIMITER, space, CHANNEL, "*");
 
-        this.store = ExtensionLoader.getLoader(IStore.class).getExtension(url.getProtocol());
-        store.initialize(url);
+        // initialize store
+        redisStore.initialize(url);
 
         // start cycle pull configs scheduled
         scheduledPullConfigs();
@@ -122,15 +111,14 @@ public class StorePool implements IStoreListener {
     public void publish(String module, Object object) {
         String channel;
         if (object instanceof GlobalConfig) {
-            channel = space + DELIMITER + Category.GLOBAL.name() + DELIMITER + module;
+            channel = buildGlobalChannel(module);
         } else if (object instanceof RuleConfig) {
             RuleConfig ruleConfig = (RuleConfig) object;
-            channel = space + DELIMITER + Category.RULE.name() +
-                    DELIMITER + module + DELIMITER + ruleConfig.identity();
+            channel = buildRuleChannel(module, ruleConfig.identity());
         } else {
             throw new IllegalArgumentException("Illegal object type");
         }
-        store.publish(channel, object);
+        redisStore.publish(channel, SerializeUtils.serialize(object));
     }
 
     /**
@@ -164,10 +152,9 @@ public class StorePool implements IStoreListener {
      * The pull all configs
      */
     private void pullConfigs() {
-        List<String> remoteChannels = new ArrayList<>();
         // pull remote global configs
         String remoteGlobalConfigKey = String.join(DELIMITER, space, Category.GLOBAL.name());
-        Map<String, String> remoteGlobalConfigs = store.pull(remoteGlobalConfigKey);
+        Map<String, String> remoteGlobalConfigs = redisStore.getMap(remoteGlobalConfigKey);
         log.debug("The global config pull changed: {}", remoteGlobalConfigs);
         Map<String, String> addRemoteGlobalConfigs = new HashMap<>(modules.size());
         for (Map.Entry<String, Neural> entry : modules.entrySet()) {
@@ -177,12 +164,10 @@ public class StorePool implements IStoreListener {
             }
         }
         if (!addRemoteGlobalConfigs.isEmpty()) {
-            store.batchAdd(remoteGlobalConfigKey, addRemoteGlobalConfigs);
+            redisStore.putAllMap(remoteGlobalConfigKey, addRemoteGlobalConfigs);
             remoteGlobalConfigs.putAll(addRemoteGlobalConfigs);
         }
         for (Map.Entry<String, String> entry : remoteGlobalConfigs.entrySet()) {
-            String remoteGlobalChannel = String.join(DELIMITER, remoteGlobalConfigKey, CHANNEL, entry.getKey());
-            remoteChannels.add(remoteGlobalChannel);
             Neural neural = modules.get(entry.getKey());
             if (neural != null) {
                 neural.notify(Category.GLOBAL, Category.GLOBAL.name(), entry.getValue());
@@ -191,35 +176,27 @@ public class StorePool implements IStoreListener {
 
         // pull remote rule configs
         String remoteRuleConfigKey = String.join(DELIMITER, space, Category.RULE.name());
-        Map<String, String> remoteRuleConfigs = store.pull(remoteRuleConfigKey);
+        Map<String, String> remoteRuleConfigs = redisStore.getMap(remoteRuleConfigKey);
         log.debug("The rule config pull changed: {}", remoteRuleConfigs);
         Map<String, String> addRemoteRuleConfigs = new HashMap<>(modules.size());
         for (Map.Entry<String, Map<String, String>> entry : ruleConfigs.entrySet()) {
             for (Map.Entry<String, String> subEntry : entry.getValue().entrySet()) {
-                String identity = subEntry.getKey();
+                String identity = entry.getKey() + DELIMITER + subEntry.getKey();
                 if (remoteRuleConfigs.isEmpty() || !remoteRuleConfigs.containsKey(identity)) {
                     addRemoteRuleConfigs.put(identity, subEntry.getValue());
                 }
             }
         }
         if (!addRemoteRuleConfigs.isEmpty()) {
-            store.batchAdd(remoteRuleConfigKey, addRemoteRuleConfigs);
+            redisStore.putAllMap(remoteRuleConfigKey, addRemoteRuleConfigs);
             remoteRuleConfigs.putAll(addRemoteRuleConfigs);
         }
         for (Map.Entry<String, String> entry : remoteRuleConfigs.entrySet()) {
-            String remoteRuleChannel = String.join(DELIMITER, remoteRuleConfigKey, CHANNEL, entry.getKey());
-            remoteChannels.add(remoteRuleChannel);
             String identity = entry.getKey();
             Neural neural = modules.get(identity.substring(0, identity.indexOf(DELIMITER)));
             if (neural != null) {
                 neural.notify(Category.RULE, identity, entry.getValue());
             }
-        }
-
-        // update channel list
-        channels.clear();
-        if (!remoteChannels.isEmpty()) {
-            channels.addAll(remoteChannels);
         }
     }
 
@@ -229,12 +206,8 @@ public class StorePool implements IStoreListener {
     private void subscribeNotifyConfigs() {
         // start subscribe config data executor
         log.debug("The {} executing subscribe config data executor", space);
-        if (channels.isEmpty()) {
-            return;
-        }
-
         // the execute subscribe
-        store.subscribe(channels, this);
+        redisStore.subscribe(patternChannel, this);
     }
 
     @Override
@@ -244,7 +217,7 @@ public class StorePool implements IStoreListener {
             return;
         }
 
-        Category remoteCategory = Category.valueOf(channel.split(DELIMITER)[0]);
+        Category remoteCategory = Category.valueOf(channel.split(DELIMITER)[2]);
         String remoteChannel = channel.substring(channel.indexOf(CHANNEL) + 8);
         String module = remoteChannel.split(DELIMITER)[0];
         Neural neural = modules.get(module);
@@ -305,7 +278,7 @@ public class StorePool implements IStoreListener {
 
                     String key = String.join(DELIMITER, space, STATISTICS, identityEntry.getKey(), String.valueOf(time));
                     // push statistics data to remote
-                    store.batchIncrementBy(key, sendData, neural.getGlobalConfig().getStatisticExpire());
+                    redisStore.batchIncrementBy(key, sendData, neural.getGlobalConfig().getStatisticExpire());
                 }
             } catch (Exception e) {
                 log.error(e.getMessage(), e);
@@ -331,6 +304,14 @@ public class StorePool implements IStoreListener {
         return calendar.getTimeInMillis();
     }
 
+    private String buildGlobalChannel(String module) {
+        return String.join(DELIMITER, space, CHANNEL, Category.GLOBAL.name(), module);
+    }
+
+    private String buildRuleChannel(String module, String identity) {
+        return String.join(DELIMITER, space, CHANNEL, Category.RULE.name(), module, identity);
+    }
+
     /**
      * The destroy store config
      */
@@ -341,11 +322,6 @@ public class StorePool implements IStoreListener {
         }
         if (null != pushStatisticsExecutor) {
             pushStatisticsExecutor.shutdown();
-        }
-
-        store.unsubscribe(this);
-        if (null != store) {
-            store.destroy();
         }
     }
 

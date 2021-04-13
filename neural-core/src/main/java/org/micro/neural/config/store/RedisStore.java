@@ -1,344 +1,197 @@
 package org.micro.neural.config.store;
 
-import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisFuture;
-import io.lettuce.core.RedisURI;
-import io.lettuce.core.ScriptOutputType;
-import io.lettuce.core.api.StatefulRedisConnection;
-import io.lettuce.core.api.async.RedisAsyncCommands;
-import io.lettuce.core.api.sync.RedisCommands;
-import io.lettuce.core.pubsub.RedisPubSubAdapter;
-import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
-import io.lettuce.core.pubsub.api.async.RedisPubSubAsyncCommands;
-import io.lettuce.core.support.ConnectionPoolSupport;
-import lombok.*;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.pool2.impl.GenericObjectPool;
-import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.micro.neural.common.URL;
 import org.micro.neural.common.utils.SerializeUtils;
-import org.micro.neural.extension.Extension;
+import org.redisson.Redisson;
+import org.redisson.api.*;
+import org.redisson.api.listener.PatternMessageListener;
+import org.redisson.codec.SerializationCodec;
+import org.redisson.config.*;
 
-import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The Store by Redis
- * <p>
+ * Neural Store
  *
  * @author lry
- **/
+ */
 @Slf4j
-@Extension("redis")
-public class RedisStore implements IStore {
+public enum RedisStore {
 
-    private static final String PASSWORD = "password";
-    private static final String DATABASE = "database";
-    private static final String SSL = "ssl";
-    private static final String TIMEOUT = "timeout";
-    private static final String BORROW_MAX_WAIT_MILLIS = "borrowMaxWaitMillis";
+    //===
 
-    private RedisClient redisClient = null;
-    private long borrowMaxWaitMillis = 10000;
-    private GenericObjectPool<StatefulRedisConnection<String, String>> objectPool = null;
-    private final Map<IStoreListener, RedisPubSub> subscribed = new ConcurrentHashMap<>();
+    INSTANCE;
 
-    @Override
-    public void initialize(URL url) {
+    private boolean started;
+    private RedissonClient redissonClient;
+    private Map<String, PatternMessageListener> patternListeners = new ConcurrentHashMap<>();
+
+    /**
+     * The initialize store
+     *
+     * @param url {@link URL}
+     */
+    public synchronized void initialize(URL url) {
+        if (started) {
+            return;
+        }
+
+        Config config = new Config();
+
         String category = url.getParameter(URL.CATEGORY_KEY);
-        RedisCategory redisCategory = RedisCategory.parse(category);
-
-        RedisURI redisUri;
-        // build sentinel or redis
-        if (RedisCategory.SENTINEL == redisCategory) {
-            redisUri = RedisURI.Builder.sentinel(url.getHost(), url.getPort()).build();
-        } else if (RedisCategory.REDIS == redisCategory) {
-            redisUri = RedisURI.Builder.redis(url.getHost(), url.getPort()).build();
+        RedisModel redisModel = RedisModel.parse(category);
+        if (RedisModel.SENTINEL == redisModel) {
+            SentinelServersConfig sentinelServersConfig = config.useSentinelServers();
+            sentinelServersConfig.addSentinelAddress(url.getAddresses());
+        } else if (RedisModel.CLUSTER == redisModel) {
+            ClusterServersConfig clusterServersConfig = config.useClusterServers();
+            clusterServersConfig.addNodeAddress(url.getAddresses());
+        } else if (RedisModel.MASTER_SLAVE == redisModel) {
+            MasterSlaveServersConfig masterSlaveServersConfig = config.useMasterSlaveServers();
+            masterSlaveServersConfig.setMasterAddress(url.getAddress());
+            masterSlaveServersConfig.setSlaveAddresses(new HashSet<>(url.getBackupAddressList()));
+        } else if (RedisModel.REPLICATED == redisModel) {
+            ReplicatedServersConfig replicatedServersConfig = config.useReplicatedServers();
+            replicatedServersConfig.addNodeAddress(url.getAddresses());
         } else {
-            throw new IllegalArgumentException("Illegal redis category:" + category);
-        }
-        // set database
-        redisUri.setDatabase(url.getParameter(DATABASE, 0));
-        // set ssl
-        redisUri.setSsl(url.getParameter(SSL, false));
-        // set timeout
-        redisUri.setTimeout(Duration.ofSeconds(url.getParameter(TIMEOUT, 60)));
-        // set password
-        String password = url.getParameter(PASSWORD);
-        if (password != null && password.length() > 0) {
-            redisUri.setPassword(password);
+            SingleServerConfig singleServerConfig = config.useSingleServer();
+            singleServerConfig.setAddress(url.getAddress());
         }
 
-        this.borrowMaxWaitMillis = url.getParameter(BORROW_MAX_WAIT_MILLIS, borrowMaxWaitMillis);
-        this.redisClient = RedisClient.create(redisUri);
-        this.objectPool = ConnectionPoolSupport.createGenericObjectPool(() ->
-                redisClient.connect(), new GenericObjectPoolConfig());
+        this.redissonClient = Redisson.create(config);
+        this.started = true;
     }
 
-    @Override
-    public Object object() {
-        return objectPool;
-    }
-
-    @Override
     public void batchIncrementBy(String key, Map<String, Object> data, long expire) {
-        StatefulRedisConnection<String, String> connection = null;
-
-        try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisAsyncCommands<String, String> commands = connection.async();
-            for (Map.Entry<String, Object> entry : data.entrySet()) {
-                if (entry.getValue() instanceof Long) {
-                    commands.hincrby(key, entry.getKey(), (Long) entry.getValue());
-                } else {
-                    commands.hset(key, entry.getKey(), String.valueOf(entry.getValue()));
-                }
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            if (entry.getValue() instanceof Long) {
+                redissonClient.getMap(key).addAndGet(entry.getKey(), (Long) entry.getValue());
+            } else {
+                redissonClient.getMap(key).put(entry.getKey(), String.valueOf(entry.getValue()));
             }
-            commands.pexpire(key, expire);
-        } finally {
-            returnObject(connection);
         }
+        redissonClient.getMap(key).expire(expire, TimeUnit.MILLISECONDS);
     }
 
-    @Override
-    public void add(String space, String key, Object data) {
-        StatefulRedisConnection<String, String> connection = null;
-
-        try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisCommands<String, String> commands = connection.sync();
-            commands.hset(space, key, SerializeUtils.serialize(data));
-        } finally {
-            returnObject(connection);
-        }
+    /**
+     * The put all map
+     *
+     * @param space space
+     * @param data  map data
+     */
+    public void putAllMap(String space, Map<String, String> data) {
+        redissonClient.getMap(space).putAll(data);
     }
 
-    @Override
-    public void batchAdd(String space, Map<String, String> data) {
-        StatefulRedisConnection<String, String> connection = null;
-
-        try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisCommands<String, String> commands = connection.sync();
-            commands.hmset(space, data);
-        } finally {
-            returnObject(connection);
-        }
-    }
-
-    @Override
-    public Set<String> search(String space, String keyword) {
-        StatefulRedisConnection<String, String> connection = null;
-
-        try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisCommands<String, String> commands = connection.sync();
-            List<String> keys = commands.hkeys(space);
-            if (keys == null || keys.isEmpty()) {
-                return Collections.emptySet();
-            }
-
-            return new HashSet<>(keys);
-        } finally {
-            returnObject(connection);
-        }
-    }
-
-    @Override
-    public <C> C query(String space, String key, Class<C> clz) {
-        StatefulRedisConnection<String, String> connection = null;
-
-        try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisCommands<String, String> commands = connection.sync();
-            String json = commands.hget(space, key);
-            if (json == null || json.length() == 0) {
-                return null;
-            }
-
-            return SerializeUtils.deserialize(clz, json);
-        } finally {
-            returnObject(connection);
-        }
-    }
-
-    @Override
-    public String get(String key) {
-        StatefulRedisConnection<String, String> connection = null;
-
-        try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisCommands<String, String> commands = connection.sync();
-            return commands.get(key);
-        } finally {
-            returnObject(connection);
-        }
-    }
-
-    @Override
+    /**
+     * The execute lua script
+     *
+     * @param script  lua script
+     * @param timeout future timeout
+     * @param keys    key list
+     * @return return object list
+     */
     public List<Object> eval(String script, Long timeout, List<Object> keys) {
-        String[] keyArray = new String[keys.size()];
+        List<Object> keyArray = new ArrayList<>(keys.size());
         for (int i = 0; i < keys.size(); i++) {
             Object obj = keys.get(i);
             if (obj == null) {
                 throw new IllegalArgumentException("The key[" + i + "] is null");
             }
 
-            keyArray[i] = String.valueOf(obj);
+            keyArray.add(obj);
         }
-
-        ScriptOutputType scriptOutputType = ScriptOutputType.MULTI;
-        long borrowMaxWaitMillis = Double.valueOf(0.8 * timeout).longValue();
-        StatefulRedisConnection<String, String> connection = null;
 
         try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisFuture<List<Object>> redisFuture = connection.async().eval(script, scriptOutputType, keyArray);
-
-            try {
-                return redisFuture.get(timeout, TimeUnit.MILLISECONDS);
-            } catch (Exception e) {
-                throw new RuntimeException(e.getMessage(), e);
-            }
-        } finally {
-            returnObject(connection);
+            RFuture<List<Object>> redisFuture = redissonClient.getScript().evalAsync(
+                    RScript.Mode.READ_WRITE, script, RScript.ReturnType.MULTI, keyArray);
+            return redisFuture.get(timeout, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 
-    @Override
-    public Map<String, String> pull(String key) {
-        StatefulRedisConnection<String, String> connection = null;
-        try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisCommands<String, String> commands = connection.sync();
-            return commands.hgetall(key);
-        } finally {
-            returnObject(connection);
+    /**
+     * The get all key-value by name
+     *
+     * @param name map name
+     * @return map
+     */
+    public Map<String, String> getMap(String name) {
+        Map<Object, Object> remoteMap = redissonClient.getMap(name);
+        if (remoteMap == null || remoteMap.isEmpty()) {
+            return Collections.emptyMap();
         }
-    }
 
-    @Override
-    public void publish(String channel, Object data) {
-        StatefulRedisConnection<String, String> connection = null;
-        try {
-            connection = borrowObject(borrowMaxWaitMillis);
-            RedisCommands<String, String> commands = connection.sync();
-            commands.publish(channel, SerializeUtils.serialize(data));
-        } finally {
-            returnObject(connection);
+        Map<String, String> map = new HashMap<>();
+        for (Map.Entry<Object, Object> entry : remoteMap.entrySet()) {
+            map.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
         }
+
+        return map;
     }
 
-    @Override
-    public void subscribe(Collection<String> channels, IStoreListener listener) {
-        StatefulRedisPubSubConnection<String, String> connection = redisClient.connectPubSub();
-        connection.addListener(new RedisPubSubAdapter<String, String>() {
-
-            @Override
-            public void message(String channel, String message) {
-                log.debug("subscribe: message={} on channel {}", message, channel);
-                listener.notify(channel, message);
-            }
-
-            @Override
-            public void subscribed(String channel, long count) {
-                log.debug("subscribe: subscribed channel={}, count={}", channel, count);
-            }
-
-            @Override
-            public void unsubscribed(String channel, long count) {
-                log.debug("subscribe: unsubscribed channel={}, count={}", channel, count);
-            }
-
-        });
-        RedisPubSubAsyncCommands<String, String> commands = connection.async();
-        this.subscribed.put(listener, new RedisPubSub(connection, commands));
-        commands.subscribe(channels.toArray(new String[0]));
+    /**
+     * The publish
+     *
+     * @param channel channel
+     * @param data    data
+     */
+    public void publish(String channel, String data) {
+        RTopic topic = redissonClient.getTopic(channel, new SerializationCodec());
+        topic.publish(SerializeUtils.serialize(data));
     }
 
-    @Override
-    public void unsubscribe(IStoreListener listener) {
-        RedisPubSub redisPubSub = subscribed.get(listener);
-        if (redisPubSub != null) {
-            redisPubSub.getCommands().unsubscribe();
-            redisPubSub.getConnection().closeAsync();
-            subscribed.remove(listener);
+    /**
+     * The subscribe by pattern
+     *
+     * @param pattern  pattern
+     * @param listener {@link IStoreListener}
+     */
+    public void subscribe(String pattern, IStoreListener listener) {
+        if (patternListeners.containsKey(pattern)) {
+            log.warn("The repeated subscribe:{}, listener:{}", pattern, listener);
+            return;
         }
+
+        PatternMessageListener<String> pmListener = (pattern1, channel, msg) -> {
+            log.debug("The notify message pattern:{}, channel:{}, msg: {}", pattern1, channel, msg);
+            listener.notify(channel.toString(), msg);
+        };
+        patternListeners.put(pattern, pmListener);
+
+        RPatternTopic rPatternTopic = redissonClient.getPatternTopic(pattern);
+        rPatternTopic.addListener(String.class, pmListener);
     }
 
-    @Override
+    /**
+     * The pattern unsubscribe
+     *
+     * @param pattern pattern
+     */
+    public void unsubscribe(String pattern) {
+        PatternMessageListener patternMessageListener = patternListeners.get(pattern);
+        if (patternMessageListener == null) {
+            return;
+        }
+
+        RPatternTopic rPatternTopic = redissonClient.getPatternTopic(pattern);
+        rPatternTopic.removeListener(patternMessageListener);
+    }
+
+    /**
+     * The destroy
+     */
     public void destroy() {
-        if (null != objectPool) {
-            objectPool.close();
+        for (Map.Entry<String, PatternMessageListener> entry : patternListeners.entrySet()) {
+            unsubscribe(entry.getKey());
         }
-        if (null != redisClient) {
-            redisClient.shutdown();
+        if (null != redissonClient) {
+            redissonClient.shutdown();
         }
-    }
-
-    @Override
-    public StatefulRedisConnection<String, String> borrowObject() {
-        try {
-            return objectPool.borrowObject(borrowMaxWaitMillis);
-        } catch (Exception e) {
-            throw new RuntimeException("The borrow object is exception", e);
-        }
-    }
-
-    @Override
-    public StatefulRedisConnection<String, String> borrowObject(long borrowMaxWaitMillis) {
-        try {
-            return objectPool.borrowObject(borrowMaxWaitMillis);
-        } catch (Exception e) {
-            throw new RuntimeException("The borrow object is exception", e);
-        }
-    }
-
-    @Override
-    public void returnObject(StatefulRedisConnection<String, String> connection) {
-        try {
-            if (connection != null) {
-                objectPool.returnObject(connection);
-            }
-        } catch (Exception e) {
-            log.error("The return object is exception", e);
-        }
-    }
-
-    @Getter
-    @AllArgsConstructor
-    enum RedisCategory {
-
-        // ===
-
-        REDIS("redis"), SENTINEL("sentinel");
-        String category;
-
-        public static RedisCategory parse(String category) {
-            if (category == null || category.length() == 0) {
-                return RedisCategory.REDIS;
-            }
-
-            for (RedisCategory e : values()) {
-                if (e.getCategory().equals(category)) {
-                    return e;
-                }
-            }
-
-            return RedisCategory.REDIS;
-        }
-
-    }
-
-    @Getter
-    @AllArgsConstructor
-    private class RedisPubSub {
-
-        private StatefulRedisPubSubConnection<String, String> connection;
-        private RedisPubSubAsyncCommands<String, String> commands;
-
     }
 
 }

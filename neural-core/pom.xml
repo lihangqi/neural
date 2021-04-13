@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.micro</groupId>
+        <groupId>cn.micro.neural</groupId>
         <artifactId>neural-parent</artifactId>
         <version>1.0.0-SNAPSHOT</version>
     </parent>
@@ -14,17 +14,19 @@
     <packaging>jar</packaging>
 
     <properties>
-        <guava.version>29.0-jre</guava.version>
+        <guava.version>28.0-jre</guava.version>
         <slf4j-api.version>1.7.26</slf4j-api.version>
         <lombok.version>1.18.8</lombok.version>
 
         <fastjson.version>1.2.58</fastjson.version>
         <lettuce-core.version>5.1.7.RELEASE</lettuce-core.version>
         <commons-pool2.version>2.4.3</commons-pool2.version>
+        <redisson.version>3.11.1</redisson.version>
 
         <junit.version>4.12</junit.version>
     </properties>
 
+    <!-- mvn clean source:jar install -Dmaven.test.skip=true -->
     <dependencies>
         <dependency>
             <groupId>com.google.guava</groupId>
@@ -45,19 +47,11 @@
 
         <!-- Redis -->
         <dependency>
-            <groupId>io.lettuce</groupId>
-            <artifactId>lettuce-core</artifactId>
-            <version>${lettuce-core.version}</version>
-            <!--<scope>provided</scope>-->
-        </dependency>
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-pool2</artifactId>
-            <version>${commons-pool2.version}</version>
-            <!--<scope>provided</scope>-->
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>${redisson.version}</version>
         </dependency>
 
-        <!-- Test -->
         <!-- JSON -->
         <dependency>
             <groupId>com.alibaba</groupId>
@@ -65,6 +59,7 @@
             <version>${fastjson.version}</version>
             <!--<scope>test</scope>-->
         </dependency>
+        <!-- Test -->
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
